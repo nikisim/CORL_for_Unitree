@@ -1,0 +1,3 @@
+[submodule "loco_mujoco"]
+	path = loco_mujoco
+	url = git@github.com:robfiras/loco-mujoco.git
