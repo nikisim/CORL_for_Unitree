@@ -1,4 +1,4 @@
-FROM nvidia/cuda:11.3.0-runtime-ubuntu20.04
+FROM nvidia/cuda:11.0.3-base-ubuntu20.04
 WORKDIR /workspace
 
 # python, dependencies for mujoco-py, from https://github.com/openai/mujoco-py
@@ -34,6 +34,24 @@ ENV LD_LIBRARY_PATH /root/.mujoco/mujoco210/bin:${LD_LIBRARY_PATH}
 # installing poetry & env setup, mujoco_py compilation
 COPY requirements/requirements.txt requirements.txt
 RUN pip install -r requirements.txt
+RUN git clone https://github.com/openai/mujoco-py /root/.mujoco/mujoco-py \
+     && cd /root/.mujoco/mujoco-py \
+     && pip install -r requirements.txt \
+     && pip install -r requirements.dev.txt \
+     && pip3 install -e . --no-cache
+RUN pip install chex==0.1.6
+RUN pip install pygame
+RUN pip install dotmap
+RUN pip install agents     
+RUN pip install -U 'mujoco-py<2.2,>=2.1'
+RUN pip install 'cython<3'
 RUN python -c "import mujoco_py"
 
+
 COPY . /workspace/CORL/
+
+# RUN pip install loco-mujoco \
+#      && loco-mujoco-download
+# RUN git clone https://github.com/robfiras/loco-mujoco.git /workspace/loco-mujoco \
+#      && cd /workspace/loco-mujoco \
+#      && pip install -e . \
