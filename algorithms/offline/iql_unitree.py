@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
-import d4rl
+# import d4rl
 import gymnasium as gym
 import numpy as np
 import loco_mujoco
@@ -38,7 +38,7 @@ class TrainConfig:
     eval_freq: int = int(5e3)  # How often (time steps) we evaluate
     n_episodes: int = 10  # How many episodes run during evaluation
     max_timesteps: int = int(1e6)  # Max time steps to run environment
-    checkpoints_path: Optional[str] = None  # Save path
+    checkpoints_path: Optional[str] = "unitree_a1_saved_models"  # Save path
     load_model: str = ""  # Model load file name, "" doesn't load
     # IQL
     buffer_size: int = 2_000_000  # Replay buffer size
@@ -56,7 +56,7 @@ class TrainConfig:
     actor_dropout: Optional[float] = None  # Adroit uses dropout for policy network
     # Wandb logging
     project: str = "CORL"
-    group: str = "IQL-D4RL"
+    group: str = "IQL-UnitreeA1"
     name: str = "IQL"
 
     def __post_init__(self):
@@ -196,10 +196,12 @@ def eval_actor(
     episode_rewards = []
     for _ in range(n_episodes):
         state, done = env.reset()[0], False
+        env.render()
         episode_reward = 0.0
         while not done:
             action = actor.act(state, device)
             state, reward, done, _,_ = env.step(action)
+            env.render()
             episode_reward += reward
         episode_rewards.append(episode_reward)
 
@@ -530,7 +532,8 @@ class ImplicitQLearning:
 
 @pyrallis.wrap()
 def train(config: TrainConfig):
-    env = gym.make("LocoMujoco", env_name="UnitreeA1.simple")
+    env = gym.make("LocoMujoco", env_name="UnitreeA1.simple", render_mode="rgb_array")
+    env = gym.wrappers.RecordVideo(env, f"videos/unitreeA1", episode_trigger = lambda x: x % 100 == 0)
 
     state_dim = env.observation_space.shape[0]
     action_dim = env.action_space.shape[0]

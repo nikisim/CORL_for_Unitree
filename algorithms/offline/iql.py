@@ -31,7 +31,7 @@ LOG_STD_MAX = 2.0
 class TrainConfig:
     # Experiment
     device: str = "cuda"
-    env: str = "halfcheetah-medium-expert-v2"  # OpenAI gym environment name
+    env: str = "hopper-medium-expert-v2"  # OpenAI gym environment name
     seed: int = 0  # Sets Gym, PyTorch and Numpy seeds
     eval_freq: int = int(5e3)  # How often (time steps) we evaluate
     n_episodes: int = 10  # How many episodes run during evaluation
@@ -201,6 +201,7 @@ def eval_actor(
             state, reward, done, _ = env.step(action)
             episode_reward += reward
         episode_rewards.append(episode_reward)
+        env.close()
 
     actor.train()
     return np.asarray(episode_rewards)
@@ -516,7 +517,7 @@ class ImplicitQLearning:
 
 @pyrallis.wrap()
 def train(config: TrainConfig):
-    env = gym.make(config.env)
+    env = gym.make(config.env, render_mode="human")
 
     state_dim = env.observation_space.shape[0]
     action_dim = env.action_space.shape[0]
