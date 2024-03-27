@@ -6,6 +6,9 @@ sweep_config.yaml
 .ml-job-preset.yml
 wandb
 
+videos/
+unitree_a1_saved_models/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -59,7 +62,6 @@ coverage.xml
 *.py,cover
 .hypothesis/
 .pytest_cache/
-.videos/
 
 # Translations
 *.mo
