@@ -7,13 +7,11 @@ import uuid
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
-import yaml
 
 # import d4rl
-import gymnasium as gym
+import gym
+import metagym.quadrupedal
 import numpy as np
-import loco_mujoco
-from loco_mujoco import LocoEnv
 import pyrallis
 import torch
 import torch.nn as nn
@@ -34,13 +32,13 @@ LOG_STD_MAX = 2.0
 class TrainConfig:
     # Experiment
     device: str = "cuda"
-    env: str = "UnitreeA1_simple_perfect"  # OpenAI gym environment name
+    env: str = "UnitreeA1_ground"  # OpenAI gym environment name
     seed: int = 0  # Sets Gym, PyTorch and Numpy seeds
     eval_freq: int = int(5e3)  # How often (time steps) we evaluate
     n_episodes: int = 10  # How many episodes run during evaluation
     max_timesteps: int = int(1e6)  # Max time steps to run environment
-    checkpoints_path: Optional[str] = "unitree_a1_saved_models/IQL-UnitreeA1_simple_perfect-a175ba63/"  # Save path
-    load_model: str = "unitree_a1_saved_models/IQL-UnitreeA1_simple_perfect-a175ba63/checkpoint_999999.pt"  # Model load file name, "" doesn't load
+    checkpoints_path: Optional[str] = None  # Save path
+    load_model: str = ""  # Model load file name, "" doesn't load
     # IQL
     buffer_size: int = 2_000_000  # Replay buffer size
     batch_size: int = 256  # Batch size for all networks
@@ -56,8 +54,8 @@ class TrainConfig:
     actor_lr: float = 3e-4  # Actor learning rate
     actor_dropout: Optional[float] = None  # Adroit uses dropout for policy network
     # Wandb logging
-    project: str = "CORL"
-    group: str = "IQL-UnitreeA1"
+    project: str = "CORL_Unitree_Ground"
+    group: str = "IQL-ETG_UnitreeA1"
     name: str = "IQL"
 
     def __post_init__(self):
@@ -89,6 +87,12 @@ def wrap_env(
 ) -> gym.Env:
     # PEP 8: E731 do not assign a lambda expression, use a def
     def normalize_state(state):
+        # print("State_shape= ",state[0].shape)
+        # print("State= ",state[0])
+        if isinstance(state, Tuple):
+                    state = state[0]
+        # print("Type State= ",type(state))
+        # print("State_mean= ",state_mean)
         return (
             state - state_mean
         ) / state_std  # epsilon should be already added in std.
@@ -169,7 +173,7 @@ def set_seed(
     seed: int, env: Optional[gym.Env] = None, deterministic_torch: bool = False
 ):
     if env is not None:
-        # env.seed(seed)
+        env.seed(seed)
         env.action_space.seed(seed)
     os.environ["PYTHONHASHSEED"] = str(seed)
     np.random.seed(seed)
@@ -193,18 +197,18 @@ def wandb_init(config: dict) -> None:
 def eval_actor(
     env: gym.Env, actor: nn.Module, device: str, n_episodes: int, seed: int
 ) -> np.ndarray:
+    env.seed(seed)
     actor.eval()
     episode_rewards = []
     for _ in range(n_episodes):
-        state, done = env.reset()[0], False
-        # env.render()
+        state, done = env.reset(), False
         episode_reward = 0.0
         while not done:
             action = actor.act(state, device)
-            state, reward, done, _,_ = env.step(action)
-            # env.render()
+            state, reward, done, _ = env.step(action)
             episode_reward += reward
         episode_rewards.append(episode_reward)
+        env.close()
 
     actor.train()
     return np.asarray(episode_rewards)
@@ -238,17 +242,9 @@ def asymmetric_l2_loss(u: torch.Tensor, tau: float) -> torch.Tensor:
     return torch.mean(torch.abs(tau - (u < 0).float()) * u**2)
 
 
-def reformat_dataset(dataset):
-
-    dataset['observations'] = dataset.pop('states')
-    dataset['actions'] = dataset.pop('actions')
-    dataset['next_observations'] = dataset.pop('next_states')
-    dataset['rewards'] = dataset.pop('rewards')
-    dataset['terminals'] = dataset.pop('last')
-
-    del dataset['absorbing']
-
-    return dataset
+def get_normalized_score(score_episode: np.ndarray, ref_min_score, ref_max_score):
+    score_mean = score_episode.mean()
+    return (score_mean - ref_min_score) / (ref_max_score - ref_min_score)
 
 
 class Squeeze(nn.Module):
@@ -533,18 +529,17 @@ class ImplicitQLearning:
 
 @pyrallis.wrap()
 def train(config: TrainConfig):
-    env = gym.make("LocoMujoco", env_name="UnitreeA1.simple", render_mode="rgb_array")
-    env = gym.wrappers.RecordVideo(env, f"videos/unitreeA1", episode_trigger = lambda x: x % 100 == 0)
+    #env = gym.make(config.env, render_mode="human")
+    env = gym.make('quadrupedal-v0',render=0,task="ground")
+    #env = gym.wrappers.RecordVideo(env, f"videos/unitreeA1_ground")#, episode_trigger = lambda x: x % 1 == 0)
 
     state_dim = env.observation_space.shape[0]
     action_dim = env.action_space.shape[0]
 
-    #dataset = d4rl.qlearning_dataset(env)
-
-    mdp = LocoEnv.make("UnitreeA1.simple.perfect")
-    loco_mujoco_dataset = mdp.create_dataset()
-    print(loco_mujoco_dataset.keys())
-    dataset = reformat_dataset(loco_mujoco_dataset)
+    dataset = np.load('data/dataset_unitree_ground2.npy', allow_pickle=True).item()
+    REF_MIN_SCORE = dataset['rewards'].min()
+    REF_MAX_SCORE = dataset['rewards'].max()
+    print('-----------Dataset loaded---------------')
 
     if config.normalize_reward:
         modify_reward(dataset, config.env)
@@ -623,7 +618,6 @@ def train(config: TrainConfig):
     if config.load_model != "":
         policy_file = Path(config.load_model)
         trainer.load_state_dict(torch.load(policy_file))
-        print("Actor Loaded!")
         actor = trainer.actor
 
     wandb_init(asdict(config))
@@ -645,12 +639,12 @@ def train(config: TrainConfig):
                 seed=config.seed,
             )
             eval_score = eval_scores.mean()
-            # normalized_eval_score = env.get_normalized_score(eval_score) * 100.0
-            evaluations.append(eval_score)
+            normalized_eval_score = get_normalized_score(eval_scores, REF_MIN_SCORE, REF_MAX_SCORE) * 100.0
+            evaluations.append(normalized_eval_score)
             print("---------------------------------------")
             print(
                 f"Evaluation over {config.n_episodes} episodes: "
-                f"{eval_score:.3f} , D4RL score: {eval_score:.3f}"
+                f"{eval_score:.3f} , Mean score: {eval_score:.3f}, Normilized score: {normalized_eval_score:.3f}"
             )
             print("---------------------------------------")
             if config.checkpoints_path is not None:
@@ -659,62 +653,11 @@ def train(config: TrainConfig):
                     os.path.join(config.checkpoints_path, f"checkpoint_{t}.pt"),
                 )
             wandb.log(
-                {"d4rl_normalized_score": eval_score}, step=trainer.total_it
+                {"Mean_score": eval_score,
+                 "Normalized_score": normalized_eval_score
+                 }, step=trainer.total_it
             )
 
 
 if __name__ == "__main__":
     train()
-    # env = gym.make("LocoMujoco", env_name="UnitreeA1.simple", render_mode="human")
-    # max_action = float(env.action_space.high[0])
-
-    # state_dim = env.observation_space.shape[0]
-    # action_dim = env.action_space.shape[0]
-
-
-
-    # #load config file
-    # with open('unitree_a1_saved_models/IQL-UnitreeA1_simple_perfect-a175ba63/config.yaml', 'r') as file:
-    #     conf = yaml.safe_load(file)
-
-    # actor = (
-    #         DeterministicPolicy(
-    #             state_dim, action_dim, max_action, dropout=conf['actor_dropout']
-    #         )
-    #         if conf['iql_deterministic']
-    #         else GaussianPolicy(
-    #             state_dim, action_dim, max_action, dropout=conf['actor_dropout']
-    #         )
-    #     ).to(conf['device'])
-
-    # q_network = TwinQ(state_dim, action_dim).to(conf['device'])
-    # v_network = ValueFunction(state_dim).to(conf['device'])
-    # v_optimizer = torch.optim.Adam(v_network.parameters(), lr=conf['vf_lr'])
-    # q_optimizer = torch.optim.Adam(q_network.parameters(), lr=conf['qf_lr'])
-    # actor_optimizer = torch.optim.Adam(actor.parameters(), lr=conf['actor_lr'])
-
-    # kwargs = {
-    #     "max_action": max_action,
-    #     "actor": actor,
-    #     "actor_optimizer": actor_optimizer,
-    #     "q_network": q_network,
-    #     "q_optimizer": q_optimizer,
-    #     "v_network": v_network,
-    #     "v_optimizer": v_optimizer,
-    #     "discount": conf['discount'],
-    #     "tau": conf['tau'],
-    #     "device": conf['device'],
-    #     # IQL
-    #     "beta": conf['beta'],
-    #     "iql_tau": conf['iql_tau'],
-    #     "max_steps": conf['max_timesteps'],
-    # }
-
-    # trainer = ImplicitQLearning(**kwargs)
-
-    # policy_file = Path('unitree_a1_saved_models/IQL-UnitreeA1_simple_perfect-a175ba63/checkpoint_999999.pt')
-    # trainer.load_state_dict(torch.load(policy_file))
-    # print("Actor Loaded!")
-    # actor = trainer.actor
-    
-    # eval_actor(env, trainer, device='cuda', n_episodes=10, seed=0)

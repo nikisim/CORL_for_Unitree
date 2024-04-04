@@ -8,6 +8,7 @@ wandb
 
 videos/
 unitree_a1_saved_models/
+data/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
