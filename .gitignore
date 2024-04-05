@@ -10,7 +10,6 @@ wandb
 videos/
 unitree_a1_saved_models/
 *npy
-*pkl
 *ipynb
 
 # Byte-compiled / optimized / DLL files

@@ -13,6 +13,8 @@ from functools import partial
 from typing import Any, Callable, Dict, Sequence, Tuple, Union
 
 import chex
+import flax
+import json
 #import d4rl  # noqa
 import flax.linen as nn
 import gym
@@ -30,6 +32,7 @@ from tqdm.auto import trange
 default_kernel_init = nn.initializers.lecun_normal()
 default_bias_init = nn.initializers.zeros
 
+ENV_NAME = "UnitreeA1_Ground"
 
 @dataclass
 class Config:
@@ -766,6 +769,29 @@ def main(config: Config):
         wandb.log(
             {"epoch": epoch, **{f"ReBRAC/{k}": v for k, v in mean_metrics.items()}}
         )
+
+        # saving model
+        if epoch % config.eval_save_model_freq == 0 or epoch == config.num_epochs - 1:
+            if not os.path.exists(f'data/saved_models/{ENV_NAME}'):
+                os.makedirs(f'data/saved_models/{ENV_NAME}')
+            
+
+            # Save checkpoint dict to a JSON file
+            config_dict = asdict(config) 
+            config_path = f'data/saved_models/{ENV_NAME}/config.json'
+            with open(config_path, 'w') as f:
+                json.dump(config_dict, f, indent=1)
+            
+            # Save model
+            save_path = f'data/saved_models/{ENV_NAME}/actor_state{epoch}.pkl'
+            with open(save_path, "wb") as f:
+                f.write(
+                    flax.serialization.to_bytes(
+                            update_carry['actor']
+                    )
+                )
+            print(f"model saved to {save_path}")
+
 
         if epoch % config.eval_every == 0 or epoch == config.num_epochs - 1:
             eval_returns = evaluate(

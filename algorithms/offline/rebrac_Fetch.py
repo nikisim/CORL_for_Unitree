@@ -33,7 +33,7 @@ from tqdm.auto import trange
 default_kernel_init = nn.initializers.lecun_normal()
 default_bias_init = nn.initializers.zeros
 
-ENV_NAME = "FetchPickAndPlace"
+ENV_NAME = "FetchSlide"
 
 @dataclass
 class Config:
@@ -49,8 +49,8 @@ class Config:
     critic_n_hiddens: int = 3
     gamma: float = 0.99
     tau: float = 5e-3
-    actor_bc_coef: float = 8.0
-    critic_bc_coef: float = 8.0
+    actor_bc_coef: float = 2.0
+    critic_bc_coef: float = 2.0
     actor_ln: bool = True
     critic_ln: bool = True
     policy_noise: float = 0.2
@@ -66,8 +66,8 @@ class Config:
     normalize_states: bool = False
     # evaluation params
     eval_episodes: int = 50
-    eval_every: int = 5
-    eval_save_model_freq: int = 100
+    eval_every: int = 10
+    eval_save_model_freq: int = 10
     # general params
     train_seed: int = 0
     eval_seed: int = 42
@@ -823,8 +823,6 @@ def main(config: Config):
             {"epoch": epoch, **{f"ReBRAC/{k}": v for k, v in mean_metrics.items()}}
         )
 
-        #jnp.save('data/saved_models/FetchReach_test.npy',update_carry["actor"])
-        
         # saving model
         if epoch % config.eval_save_model_freq == 0 or epoch == config.num_epochs - 1:
             if not os.path.exists(f'data/saved_models/{ENV_NAME}'):
