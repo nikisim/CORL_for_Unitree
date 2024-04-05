@@ -45,8 +45,8 @@ class Config:
     critic_n_hiddens: int = 4
     gamma: float = 0.99
     tau: float = 5e-3
-    actor_bc_coef: float = 5.0
-    critic_bc_coef: float = 5.0
+    actor_bc_coef: float = 10.0
+    critic_bc_coef: float = 10.0
     actor_ln: bool = True
     critic_ln: bool = True
     policy_noise: float = 0.2
@@ -69,6 +69,19 @@ class Config:
 
     def __post_init__(self):
         self.name = f"{self.name}-{self.dataset_name}-{str(uuid.uuid4())[:8]}"
+
+    def from_dict(cls, config_dict: Dict[str, Any]) -> 'Config':
+        """
+        Create a Config instance from a dictionary.
+        
+        Args:
+            config_dict (Dict[str, Any]): A dictionary containing config parameters.
+        
+        Returns:
+            Config: An instance of the Config class.
+        """
+        # Use the ** operator to unpack the dictionary into the dataclass constructor
+        return cls(**config_dict)
 
 
 def pytorch_init(fan_in: float) -> Callable:

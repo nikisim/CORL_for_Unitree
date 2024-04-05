@@ -7,6 +7,7 @@ os.environ["TF_CUDNN_DETERMINISTIC"] = "1"  # For reproducibility
 
 import math
 import uuid
+import json
 from copy import deepcopy
 from dataclasses import asdict, dataclass
 from functools import partial
@@ -23,8 +24,10 @@ import numpy as np
 import optax
 import pyrallis
 import wandb
+import flax
 from flax.core import FrozenDict
 from flax.training.train_state import TrainState
+from flax.training import checkpoints
 from tqdm.auto import trange
 
 default_kernel_init = nn.initializers.lecun_normal()
@@ -46,16 +49,16 @@ class Config:
     critic_n_hiddens: int = 3
     gamma: float = 0.99
     tau: float = 5e-3
-    actor_bc_coef: float = 10.0
-    critic_bc_coef: float = 10.0
-    actor_ln: bool = False
+    actor_bc_coef: float = 8.0
+    critic_bc_coef: float = 8.0
+    actor_ln: bool = True
     critic_ln: bool = True
     policy_noise: float = 0.2
     noise_clip: float = 0.5
     policy_freq: int = 2
     normalize_q: bool = True
     # training params
-    dataset_name: str = f"{ENV_NAME}Dense-v2"
+    dataset_name: str = f"/home/nikisim/Mag_diplom/CORL/data/{ENV_NAME}Dense.npy"
     batch_size: int = 1024
     num_epochs: int = 1000
     num_updates_on_epoch: int = 1000
@@ -64,12 +67,26 @@ class Config:
     # evaluation params
     eval_episodes: int = 50
     eval_every: int = 5
+    eval_save_model_freq: int = 100
     # general params
     train_seed: int = 0
     eval_seed: int = 42
 
     def __post_init__(self):
         self.name = f"{self.name}-{self.dataset_name}-{str(uuid.uuid4())[:8]}"
+    
+    def from_dict(cls, config_dict: Dict[str, Any]) -> 'Config':
+        """
+        Create a Config instance from a dictionary.
+        
+        Args:
+            config_dict (Dict[str, Any]): A dictionary containing config parameters.
+        
+        Returns:
+            Config: An instance of the Config class.
+        """
+        # Use the ** operator to unpack the dictionary into the dataclass constructor
+        return cls(**config_dict)
 
 
 def pytorch_init(fan_in: float) -> Callable:
@@ -200,6 +217,18 @@ class EnsembleCritic(nn.Module):
         )
         return q_values
 
+# Save the TrainState to a file
+def save_train_state(train_state, save_path):
+    with open(save_path, 'wb') as f:
+        f.write(flax.serialization.to_bytes(train_state))
+
+# Load the TrainState from a file
+def load_train_state(save_path, state_structure):
+    with open(save_path, 'rb') as f:
+        state_dict = flax.serialization.from_bytes(state_structure, f.read())
+    return state_dict
+
+
 
 def qlearning_dataset(
     dataset: Dict = None,
@@ -281,7 +310,7 @@ class ReplayBuffer:
         is_normalize: bool = False,
     ):
         #d4rl_data = qlearning_dataset(gym.make(dataset_name))
-        dataset = np.load(f'data/{ENV_NAME}Dense.npy', allow_pickle=True).item()
+        dataset = np.load(dataset_name, allow_pickle=True).item()
         d4rl_data = qlearning_dataset(dataset=dataset)
         print('-----------Dataset loaded---------------')
         buffer = {
@@ -427,6 +456,10 @@ def evaluate(
         while not done:
             action = np.asarray(jax.device_get(action_fn(params, obs)))
             obs, reward, termination, truncation, info = env.step(action)
+            # print("Observation:", obs)
+            # print("Action:", action)
+            # print("New Obs:", obs)
+            # print("Reward:", reward)
             done = termination or truncation
             total_reward += reward
         success.append(info['is_success'])
@@ -737,6 +770,27 @@ def main(config: Config):
         "bc_mse_random",
         "action_mse",
     ]
+
+
+    # # Load the TrainState from a file
+    # def load_train_state(save_path, state_structure):
+    #     with open(save_path, 'rb') as f:
+    #         state_dict = flax.serialization.from_bytes(state_structure, f.read())
+    #     return state_dict
+
+    # def create_train_state(actor_module, actor_key, init_state, actor_learning_rate):
+    #     return ActorTrainState.create(
+    #         apply_fn=actor_module.apply,
+    #         params=actor_module.init(actor_key, init_state),
+    #         target_params=actor_module.init(actor_key, init_state),
+    #         tx=optax.adam(learning_rate=actor_learning_rate),
+    #     )
+
+    # save_path = '/home/nikisim/Mag_diplom/CORL/actor_state.pkl'
+    # dummy_state = create_train_state(actor_module, actor_key, init_state, config.actor_learning_rate)
+    # actor = load_train_state(save_path, dummy_state)
+
+
     # shared carry for update loops
     update_carry = {
         "key": key,
@@ -768,6 +822,30 @@ def main(config: Config):
         wandb.log(
             {"epoch": epoch, **{f"ReBRAC/{k}": v for k, v in mean_metrics.items()}}
         )
+
+        #jnp.save('data/saved_models/FetchReach_test.npy',update_carry["actor"])
+        
+        # saving model
+        if epoch % config.eval_save_model_freq == 0 or epoch == config.num_epochs - 1:
+            if not os.path.exists(f'data/saved_models/{ENV_NAME}'):
+                os.makedirs(f'data/saved_models/{ENV_NAME}')
+            
+
+            # Save checkpoint dict to a JSON file
+            config_dict = asdict(config) 
+            config_path = f'data/saved_models/{ENV_NAME}/config.json'
+            with open(config_path, 'w') as f:
+                json.dump(config_dict, f, indent=1)
+            
+            # Save model
+            save_path = f'data/saved_models/{ENV_NAME}/actor_state{epoch}.pkl'
+            with open(save_path, "wb") as f:
+                f.write(
+                    flax.serialization.to_bytes(
+                            update_carry['actor']
+                    )
+                )
+            print(f"model saved to {save_path}")
 
         if epoch % config.eval_every == 0 or epoch == config.num_epochs - 1:
             eval_returns, eval_success = evaluate(

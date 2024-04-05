@@ -6,9 +6,12 @@ sweep_config.yaml
 .ml-job-preset.yml
 wandb
 
+.vscode/
 videos/
 unitree_a1_saved_models/
-data/
+*npy
+*pkl
+*ipynb
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
