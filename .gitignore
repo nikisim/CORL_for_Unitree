@@ -10,7 +10,9 @@ wandb
 videos/
 unitree_a1_saved_models/
 *npy
+*pkl
 *ipynb
+data/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

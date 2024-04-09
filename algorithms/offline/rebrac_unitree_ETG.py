@@ -48,8 +48,8 @@ class Config:
     critic_n_hiddens: int = 4
     gamma: float = 0.99
     tau: float = 5e-3
-    actor_bc_coef: float = 10.0
-    critic_bc_coef: float = 10.0
+    actor_bc_coef: float = 2.0
+    critic_bc_coef: float = 2.0
     actor_ln: bool = True
     critic_ln: bool = True
     policy_noise: float = 0.2
@@ -66,6 +66,8 @@ class Config:
     # evaluation params
     eval_episodes: int = 10
     eval_every: int = 5
+    eval_save_model_freq: int = 100
+    save: bool = True
     # general params
     train_seed: int = 0
     eval_seed: int = 42
@@ -627,7 +629,7 @@ def main(config: Config):
     dict_config = asdict(config)
     dict_config["mlc_job_name"] = os.environ.get("PLATFORM_JOB_NAME")
 
-    data = np.load('data/dataset2.npy', allow_pickle=True).item()
+    data = np.load('data/dataset_unitree_ground2.npy', allow_pickle=True).item()
     REF_MIN_SCORE = data['rewards'].min()
     REF_MAX_SCORE = data['rewards'].max()
 
@@ -770,29 +772,7 @@ def main(config: Config):
             {"epoch": epoch, **{f"ReBRAC/{k}": v for k, v in mean_metrics.items()}}
         )
 
-        # saving model
-        if epoch % config.eval_save_model_freq == 0 or epoch == config.num_epochs - 1:
-            if not os.path.exists(f'data/saved_models/{ENV_NAME}'):
-                os.makedirs(f'data/saved_models/{ENV_NAME}')
-            
-
-            # Save checkpoint dict to a JSON file
-            config_dict = asdict(config) 
-            config_path = f'data/saved_models/{ENV_NAME}/config.json'
-            with open(config_path, 'w') as f:
-                json.dump(config_dict, f, indent=1)
-            
-            # Save model
-            save_path = f'data/saved_models/{ENV_NAME}/actor_state{epoch}.pkl'
-            with open(save_path, "wb") as f:
-                f.write(
-                    flax.serialization.to_bytes(
-                            update_carry['actor']
-                    )
-                )
-            print(f"model saved to {save_path}")
-
-
+        best_score = -1e6
         if epoch % config.eval_every == 0 or epoch == config.num_epochs - 1:
             eval_returns = evaluate(
                 eval_env,
@@ -811,6 +791,44 @@ def main(config: Config):
                     "eval/normalized_score_std": np.std(normalized_score),
                 }
             )
+        
+        # saving model
+        #TODO: add saving the best model
+        if config.save:
+            #create dir
+            path = f'data/saved_models/{ENV_NAME}_ac{int(config.actor_bc_coef)}_bc_{int(config.critic_bc_coef)}'
+            if not os.path.exists(path):
+                    os.makedirs(path)
+
+            if np.mean(eval_returns) > best_score:
+                save_path = f'{path}/actor_state_best.pkl'
+                with open(save_path, "wb") as f:
+                    f.write(
+                        flax.serialization.to_bytes(
+                                update_carry['actor']
+                        )
+                    )
+                best_score = np.mean(eval_returns)
+
+            if epoch % config.eval_save_model_freq == 0 or epoch == config.num_epochs - 1:
+                
+                
+
+                # Save checkpoint dict to a JSON file
+                config_dict = asdict(config) 
+                config_path = f'{path}/config.json'
+                with open(config_path, 'w') as f:
+                    json.dump(config_dict, f, indent=1)
+                
+                # Save model
+                save_path = f'{path}/actor_state{epoch}.pkl'
+                with open(save_path, "wb") as f:
+                    f.write(
+                        flax.serialization.to_bytes(
+                                update_carry['actor']
+                        )
+                    )
+                print(f"model saved to {save_path}")
 
 
 if __name__ == "__main__":
