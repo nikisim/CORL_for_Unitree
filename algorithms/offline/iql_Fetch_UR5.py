@@ -10,7 +10,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 # import d4rl
 import gym
-import metagym.quadrupedal
+import gym_UR5_FetchPush
 import numpy as np
 import pyrallis
 import torch
@@ -27,36 +27,37 @@ EXP_ADV_MAX = 100.0
 LOG_STD_MIN = -20.0
 LOG_STD_MAX = 2.0
 
+ENV_NAME = "FetchPush_UR5"
 
 @dataclass
 class TrainConfig:
     # Experiment
     device: str = "cuda"
-    env: str = "UnitreeA1_ground"  # OpenAI gym environment name
-    seed: int = 0  # Sets Gym, PyTorch and Numpy seeds
+    env: str = ENV_NAME  # OpenAI gym environment name
+    seed: int = 12  # Sets Gym, PyTorch and Numpy seeds
     eval_freq: int = int(5e3)  # How often (time steps) we evaluate
     n_episodes: int = 10  # How many episodes run during evaluation
     max_timesteps: int = int(7e6)  # Max time steps to run environment
-    checkpoints_path: Optional[str] = None  # Save path
+    checkpoints_path: Optional[str] = 'data/saved_models/IQL_FetchPush_UR5_new_101'  # Save path
     load_model: str = ""  # Model load file name, "" doesn't load
     # IQL
     buffer_size: int = 2_000_000  # Replay buffer size
-    batch_size: int = 2048  # Batch size for all networks
+    batch_size: int = 256  # Batch size for all networks
     discount: float = 0.99  # Discount factor
     tau: float = 0.005  # Target network update rate
-    beta: float = 3.0  # Inverse temperature. Small beta -> BC, big beta -> maximizing Q
-    iql_tau: float = 0.2  # Coefficient for asymmetric loss
+    beta: float = 250.0  # Inverse temperature. Small beta -> BC, big beta -> maximizing Q
+    iql_tau: float = 0.7  # Coefficient for asymmetric loss
     iql_deterministic: bool = False  # Use deterministic actor
-    normalize: bool = True  # Normalize states
+    normalize: bool = False  # Normalize states
     normalize_reward: bool = False  # Normalize reward
     vf_lr: float = 3e-4  # V function learning rate
     qf_lr: float = 3e-4  # Critic learning rate
     actor_lr: float = 3e-4  # Actor learning rate
     actor_dropout: Optional[float] = None  # Adroit uses dropout for policy network
     # Wandb logging
-    project: str = "CORL_Unitree_Ground"
-    group: str = "IQL-ETG_UnitreeA1"
-    name: str = "IQL"
+    project: str = f"CORL_{ENV_NAME}_new_test"
+    group: str = f"IQL-{ENV_NAME}"
+    name: str = "IQL_new_coef_100"
 
     def __post_init__(self):
         self.name = f"{self.name}-{self.env}-{str(uuid.uuid4())[:8]}"
@@ -100,7 +101,15 @@ def wrap_env(
     def scale_reward(reward):
         # Please be careful, here reward is multiplied by scale!
         return reward_scale * reward
+    
+    def conact_obs(state):
+        new_obs = np.concatenate((state['observation'],
+                        state['desired_goal'],
+                        state['achieved_goal'])).astype(np.float32)
+        # print("Check-new-obs", new_obs)
+        return(np.array(new_obs))
 
+    env = gym.wrappers.TransformObservation(env, conact_obs)
     env = gym.wrappers.TransformObservation(env, normalize_state)
     if reward_scale != 1.0:
         env = gym.wrappers.TransformReward(env, scale_reward)
@@ -200,18 +209,24 @@ def eval_actor(
     env.seed(seed)
     actor.eval()
     episode_rewards = []
+    done = False
+    success = []
     for _ in range(n_episodes):
-        state, done = env.reset(), False
+        state, _ = env.reset()
         episode_reward = 0.0
         while not done:
             action = actor.act(state, device)
-            state, reward, done, _ = env.step(action)
+            state, reward, terminated, truncated, info = env.step(action)
+            done = terminated or truncated
             episode_reward += reward
         episode_rewards.append(episode_reward)
-        env.close()
-
+        success.append(info['is_success'])
+    print("---"*10)
+    print(f"{int(sum(success))} Suceess Episodes out of {len(success)}")
+    print("---"*10)
+    success_rate = sum(success)/len(success)
     actor.train()
-    return np.asarray(episode_rewards)
+    return np.asarray(episode_rewards), success_rate
 
 
 def return_reward_range(dataset, max_episode_steps):
@@ -530,13 +545,13 @@ class ImplicitQLearning:
 @pyrallis.wrap()
 def train(config: TrainConfig):
     #env = gym.make(config.env, render_mode="human")
-    env = gym.make('quadrupedal-v0',render=0,task="ground")
+    env = gym.make('gym_UR5_FetchPush/UR5_FetchPushEnv-v0', render=False)
     #env = gym.wrappers.RecordVideo(env, f"videos/unitreeA1_ground")#, episode_trigger = lambda x: x % 1 == 0)
 
-    state_dim = env.observation_space.shape[0]
-    action_dim = env.action_space.shape[0]
+    dataset = np.load('/home/nikisim/Mag_diplom/test/UR5_FetchPush_env/datasets/new_test/UR5_FetchPush_1.npy', allow_pickle=True).item()
 
-    dataset = np.load('/home/nikisim/Mag_diplom/CORL/data/dataset_unitree_ground2.npy', allow_pickle=True).item()
+    state_dim = dataset['observations'].shape[1]
+    action_dim = env.action_space.shape[0]
     REF_MIN_SCORE = dataset['rewards'].min()
     REF_MAX_SCORE = dataset['rewards'].max()
     print('-----------Dataset loaded---------------')
@@ -631,7 +646,7 @@ def train(config: TrainConfig):
         # Evaluate episode
         if (t + 1) % config.eval_freq == 0:
             print(f"Time steps: {t + 1}")
-            eval_scores = eval_actor(
+            eval_scores, eval_success = eval_actor(
                 env,
                 actor,
                 device=config.device,
@@ -652,11 +667,10 @@ def train(config: TrainConfig):
                     trainer.state_dict(),
                     os.path.join(config.checkpoints_path, f"checkpoint_{t}.pt"),
                 )
-            wandb.log({
-                 "eval/return_mean": np.mean(eval_scores),
-                 "eval/return_std": np.std(eval_scores),
-                 "eval/normalized_score_mean": np.mean(normalized_eval_score),
-                 "eval/normalized_score_std": np.std(normalized_eval_score),
+            wandb.log(
+                {"Mean_score": eval_score,
+                 "Normalized_score": normalized_eval_score,
+                 "eval/is_succeess": eval_success
                  }, step=int(t/1000)
             )
 

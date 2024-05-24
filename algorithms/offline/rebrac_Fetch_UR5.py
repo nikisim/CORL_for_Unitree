@@ -13,10 +13,13 @@ from dataclasses import asdict, dataclass
 from functools import partial
 from typing import Any, Callable, Dict, Sequence, Tuple, Union
 
+
 import chex
 #import d4rl  # noqa
 import flax.linen as nn
-import gymnasium as gym
+import gym
+import gym_UR5_FetchReach
+from gym.wrappers import TimeLimit
 # import metagym.quadrupedal
 import jax
 import jax.numpy as jnp
@@ -33,14 +36,13 @@ from tqdm.auto import trange
 default_kernel_init = nn.initializers.lecun_normal()
 default_bias_init = nn.initializers.zeros
 
-ENV_NAME = "FetchPickAndPlace"
+ENV_NAME = "FetchReach_UR5"
 
 @dataclass
 class Config:
     # wandb params
-    project: str = f"CORL_{ENV_NAME}_coef_test"
-    group: str = "rebrac"
-    name: str = "rebrac"
+    project: str = f"CORL_{ENV_NAME}_real"
+    group: str = "ReBRAC"
     # model params
     actor_learning_rate: float = 1e-3
     critic_learning_rate: float = 1e-3
@@ -49,8 +51,9 @@ class Config:
     critic_n_hiddens: int = 4
     gamma: float = 0.99
     tau: float = 5e-3
-    actor_bc_coef: float = 10.0
-    critic_bc_coef: float = 10.0
+    actor_bc_coef: float = 1300.0
+    critic_bc_coef: float = 1100.0
+    name: str = f"ReBRAC_{actor_bc_coef}_{critic_bc_coef}_Reach" #wandb name
     actor_ln: bool = True
     critic_ln: bool = True
     policy_noise: float = 0.2
@@ -58,23 +61,23 @@ class Config:
     policy_freq: int = 2
     normalize_q: bool = True
     # training params
-    dataset_name: str = f"/home/nikisim/Mag_diplom/CORL/data/{ENV_NAME}Dense.npy"
+    dataset_name: str = '/home/nikisim/Mag_diplom/UR5_FetchReach_real/datasets/UR5_FetchReach_real_small.npy'
     batch_size: int = 1024
-    num_epochs: int = 1000
+    num_epochs: int = 8000
     num_updates_on_epoch: int = 1000
     normalize_reward: bool = False
     normalize_states: bool = False
     # evaluation params
     eval_episodes: int = 10
     eval_every: int = 10
-    eval_save_model_freq: int = 10
-    save: bool = False
+    eval_save_model_freq: int = 100
+    save: bool = True
     # general params
     train_seed: int = 0
     eval_seed: int = 42
 
     def __post_init__(self):
-        self.name = f"{self.name}-{self.dataset_name}-{str(uuid.uuid4())[:8]}"
+        self.name = f"{self.name}--{str(uuid.uuid4())[:8]}"
     
     def from_dict(cls, config_dict: Dict[str, Any]) -> 'Config':
         """
@@ -314,6 +317,7 @@ class ReplayBuffer:
         dataset = np.load(dataset_name, allow_pickle=True).item()
         d4rl_data = qlearning_dataset(dataset=dataset)
         print('-----------Dataset loaded---------------')
+        print(f'-----------Dataset size = {d4rl_data["rewards"].shape[0]} ---------------')
         buffer = {
             "states": jnp.asarray(d4rl_data["observations"], dtype=jnp.float32),
             "actions": jnp.asarray(d4rl_data["actions"], dtype=jnp.float32),
@@ -395,7 +399,7 @@ def normalize(
 
 
 def make_env(env_name: str, seed: int) -> gym.Env:
-    env = gym.make(f'{ENV_NAME}Dense-v2', render_mode='rgb_array')
+    env = gym.make('gym_UR5_FetchReach/UR5_FetchReachEnv-v0', render=False)
     # env = gym.wrappers.RecordVideo(env, f"videos/{ENV_NAME}", episode_trigger = lambda x: x % 850 == 0)
     # env.seed(seed)
     env.action_space.seed(seed)
@@ -430,6 +434,7 @@ def wrap_env(
     
     env = gym.wrappers.TransformObservation(env, conact_obs)
     env = gym.wrappers.TransformObservation(env, normalize_state)
+    # env = gym.wrappers.TimeLimit(env, max_episode_steps=10)
     if reward_scale != 1.0:
         env = gym.wrappers.TransformReward(env, scale_reward)
     return env
@@ -457,16 +462,16 @@ def evaluate(
         while not done:
             action = np.asarray(jax.device_get(action_fn(params, obs)))
             obs, reward, termination, truncation, info = env.step(action)
+            done = termination or truncation
             # print("Observation:", obs)
             # print("Action:", action)
             # print("New Obs:", obs)
             # print("Reward:", reward)
-            done = termination or truncation
             total_reward += reward
         success.append(info['is_success'])
         returns.append(total_reward)
     print("---"*10)
-    print(f"{int(sum(success))} Suceess Episodes out of {len(success)}")
+    print(f"{int(sum(success))} Suceess Episodes out of {len(success)}, Percent: {100*sum(success)/len(success)}%")
     print("---"*10)
     success_rate = sum(success)/len(success)
 
@@ -660,7 +665,7 @@ def main(config: Config):
     dict_config = asdict(config)
     dict_config["mlc_job_name"] = os.environ.get("PLATFORM_JOB_NAME")
 
-    data = np.load(f'data/{ENV_NAME}Dense.npy', allow_pickle=True).item()
+    data = np.load(config.dataset_name, allow_pickle=True).item()
     REF_MIN_SCORE = data['rewards'].min()
     REF_MAX_SCORE = data['rewards'].max()
 
@@ -823,7 +828,7 @@ def main(config: Config):
         wandb.log(
             {"epoch": epoch, **{f"ReBRAC/{k}": v for k, v in mean_metrics.items()}}
         )
-
+        best_score = -1e6
         if epoch % config.eval_every == 0 or epoch == config.num_epochs - 1:
             eval_returns, eval_success = evaluate(
                 eval_env,
@@ -846,10 +851,9 @@ def main(config: Config):
 
 
         # saving model
-        #TODO: add saving the best model
         if config.save:
             #create dir
-            path = f'data/saved_models/{ENV_NAME}_ac{int(config.actor_bc_coef)}_bc_{int(config.critic_bc_coef)}'
+            path = f'data/saved_models/sim_as_real/{ENV_NAME}_ReBRAC_ac{int(config.actor_bc_coef)}_bc_{int(config.critic_bc_coef)}_{config.name}'
             if not os.path.exists(path):
                     os.makedirs(path)
 
@@ -864,9 +868,6 @@ def main(config: Config):
                 best_score = np.mean(eval_returns)
 
             if epoch % config.eval_save_model_freq == 0 or epoch == config.num_epochs - 1:
-                
-                
-
                 # Save checkpoint dict to a JSON file
                 config_dict = asdict(config) 
                 config_path = f'{path}/config.json'

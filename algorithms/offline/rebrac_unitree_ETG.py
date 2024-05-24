@@ -37,7 +37,7 @@ ENV_NAME = "UnitreeA1_Ground"
 @dataclass
 class Config:
     # wandb params
-    project: str = "CORL_Unitree_Ground_new"
+    project: str = "CORL_Unitree_Ground_last_test"
     group: str = "rebrac"
     name: str = "rebrac"
     # model params
@@ -48,8 +48,8 @@ class Config:
     critic_n_hiddens: int = 4
     gamma: float = 0.99
     tau: float = 5e-3
-    actor_bc_coef: float = 2.0
-    critic_bc_coef: float = 2.0
+    actor_bc_coef: float = 80.0
+    critic_bc_coef: float = 80.0
     actor_ln: bool = True
     critic_ln: bool = True
     policy_noise: float = 0.2
@@ -59,14 +59,14 @@ class Config:
     # training params
     dataset_name: str = "Unitree_ETG_Ground"
     batch_size: int = 1024
-    num_epochs: int = 12000
+    num_epochs: int = 225000
     num_updates_on_epoch: int = 1000
     normalize_reward: bool = False
     normalize_states: bool = False
     # evaluation params
     eval_episodes: int = 10
     eval_every: int = 5
-    eval_save_model_freq: int = 100
+    eval_save_model_freq: int = 1000
     save: bool = True
     # general params
     train_seed: int = 0
@@ -382,7 +382,7 @@ def normalize(
 
 
 def make_env(env_name: str, seed: int) -> gym.Env:
-    env = gym.make('quadrupedal-v0',render=1,task="ground")
+    env = gym.make('quadrupedal-v0',render=0,task="ground")
     env.seed(seed)
     env.action_space.seed(seed)
     env.observation_space.seed(seed)
@@ -434,11 +434,9 @@ def evaluate(
             total_reward += reward
         returns.append(total_reward)
 
-    print('***'*15)
-    print("Total Reward:", total_reward)
-    print('---'*10)
-    print("Mean Reward:", total_reward/num_episodes)
-    print('***'*15)
+        print('***'*15)
+        print("Total Reward:", total_reward)
+        print('***'*15)
     return np.array(returns)
 
 
@@ -796,7 +794,7 @@ def main(config: Config):
         #TODO: add saving the best model
         if config.save:
             #create dir
-            path = f'data/saved_models/{ENV_NAME}_ac{int(config.actor_bc_coef)}_bc_{int(config.critic_bc_coef)}'
+            path = f'data/saved_models/{ENV_NAME}_ac{int(config.actor_bc_coef)}_bc_{int(config.critic_bc_coef)}_b2048'
             if not os.path.exists(path):
                     os.makedirs(path)
 

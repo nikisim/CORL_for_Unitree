@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 # import d4rl
 import gym
-import metagym.quadrupedal
+import gym_UR5_FetchReach
 import numpy as np
 import pyrallis
 import torch
@@ -20,7 +20,7 @@ import wandb
 
 TensorBatch = List[torch.Tensor]
 
-ENV_NAME = 'Unitree_A1_Ground'
+ENV_NAME = 'FetchReach_UR5'
 
 @dataclass
 class TrainConfig:
@@ -30,7 +30,7 @@ class TrainConfig:
     seed: int = 0  # Sets Gym, PyTorch and Numpy seeds
     eval_freq: int = int(5e3)  # How often (time steps) we evaluate
     n_episodes: int = 10  # How many episodes run during evaluation
-    max_timesteps: int = int(7e6)  # Max time steps to run environment
+    max_timesteps: int = int(4e6)  # Max time steps to run environment
     checkpoints_path: Optional[str] = None  # Save path
     load_model: str = ""  # Model load file name, "" doesn't load
     # TD3
@@ -47,7 +47,7 @@ class TrainConfig:
     normalize: bool = False  # Normalize states
     normalize_reward: bool = False  # Normalize reward
     # Wandb logging
-    project: str = f"CORL_TD3_BC_{ENV_NAME}"
+    project: str = f"CORL_{ENV_NAME}_new_test"
     group: str = f"TD3_BC-{ENV_NAME}"
     name: str = "TD3_BC"
 
@@ -80,8 +80,6 @@ def wrap_env(
 ) -> gym.Env:
     # PEP 8: E731 do not assign a lambda expression, use a def
     def normalize_state(state):
-        if isinstance(state, Tuple):
-            state = state[0]
         return (
             state - state_mean
         ) / state_std  # epsilon should be already added in std.
@@ -97,7 +95,7 @@ def wrap_env(
         # print("Check-new-obs", new_obs)
         return(np.array(new_obs))
 
-    # env = gym.wrappers.TransformObservation(env, conact_obs)
+    env = gym.wrappers.TransformObservation(env, conact_obs)
     env = gym.wrappers.TransformObservation(env, normalize_state)
     if reward_scale != 1.0:
         env = gym.wrappers.TransformReward(env, scale_reward)
@@ -200,26 +198,24 @@ def eval_actor(
     done = False
     actor.eval()
     episode_rewards = []
-    # success = []
+    success = []
     for _ in range(n_episodes):
-        state, done = env.reset(), False
+        state, _ = env.reset()
         episode_reward = 0.0
         while not done:
             action = actor.act(state, device)
-            state, reward, done, _ = env.step(action)
-            # done = termination or truncation
+            state, reward, termination, truncation, info = env.step(action)
+            done = termination or truncation
             episode_reward += reward
         episode_rewards.append(episode_reward)
-        # success.append(info['is_success'])
-    # print("---"*10)
-    # print(f"{int(sum(success))} Suceess Episodes out of {len(success)}")
-    # print("---"*10)
-    # success_rate = sum(success)/len(success)
-    print('***'*15)
-    print("Episode Reward:", episode_reward)
-    print('***'*15)
+        success.append(info['is_success'])
+    print("---"*10)
+    print(f"{int(sum(success))} Suceess Episodes out of {len(success)}")
+    print("---"*10)
+    success_rate = sum(success)/len(success)
+
     actor.train()
-    return np.asarray(episode_rewards)#, success_rate
+    return np.asarray(episode_rewards), success_rate
 
 
 def return_reward_range(dataset, max_episode_steps):
@@ -418,17 +414,18 @@ class TD3_BC:
 @pyrallis.wrap()
 def train(config: TrainConfig):
 
-    data = np.load('/home/nikisim/Mag_diplom/CORL/data/dataset_unitree_ground2.npy', allow_pickle=True).item()
+    dataset_name = '/home/nikisim/Mag_diplom/FetchSlide/hindsight-experience-replay/datasets/new_test/UR5_FetchReach.npy'
+    data = np.load(dataset_name, allow_pickle=True).item()
     REF_MIN_SCORE = data['rewards'].min()
     REF_MAX_SCORE = data['rewards'].max()
 
-    env = gym.make('quadrupedal-v0',render=1,task="ground")
+    env = gym.make('gym_UR5_FetchReach/UR5_FetchReachEnv-v0', render=False)
     # env = gym.wrappers.RecordVideo(env, f"videos/TD3_BS/{ENV_NAME}")#, episode_trigger = lambda x: x % 150 == 0)
 
     
 
     # dataset = d4rl.qlearninge_dataset(env)
-    dataset = np.load('/home/nikisim/Mag_diplom/CORL/data/dataset_unitree_ground2.npy', allow_pickle=True).item()
+    dataset = np.load(dataset_name, allow_pickle=True).item()
 
     state_dim = dataset['observations'].shape[1]
     action_dim = env.action_space.shape[0]
@@ -519,7 +516,7 @@ def train(config: TrainConfig):
         # Evaluate episode
         if (t + 1) % config.eval_freq == 0:
             print(f"Time steps: {t + 1}")
-            eval_scores = eval_actor(
+            eval_scores, eval_success = eval_actor(
                 env,
                 actor,
                 device=config.device,
@@ -533,7 +530,7 @@ def train(config: TrainConfig):
             print("---------------------------------------")
             print(
                 f"Evaluation over {config.n_episodes} episodes: "
-                f"{eval_score:.3f} , Score: {normalized_eval_score:.3f}"
+                f"{eval_success:.3f} , Score: {normalized_eval_score:.3f}"
             )
             print("---------------------------------------")
 
@@ -546,7 +543,7 @@ def train(config: TrainConfig):
             wandb.log(
                 {"eval/normalized_score": normalized_eval_score,
                  "eval/return_mean": np.mean(eval_scores),
-                #  "eval/is_succeess": eval_success,
+                 "eval/is_succeess": eval_success,
                  },
                 step=int(t/1000),
             )
