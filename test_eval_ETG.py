@@ -56,6 +56,7 @@ def evaluate(
             total_reward += reward
         # success.append(info['is_success'])
         returns.append(total_reward)
+        print("Total reward:", total_reward)
     # print("---"*10)
     # print(f"{int(sum(success))} Suceess Episodes out of {len(success)}")
     # print("---"*10)

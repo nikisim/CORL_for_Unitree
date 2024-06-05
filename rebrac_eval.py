@@ -1,9 +1,10 @@
 import jax
 import optax
 import flax
-from algorithms.offline.rebrac_Fetch import DetActor, ActorTrainState, ReplayBuffer, Config
-import gymnasium as gym
-from algorithms.offline.rebrac_Fetch import wrap_env, evaluate
+from algorithms.offline.rebrac_Fetch_UR5 import DetActor, ActorTrainState, ReplayBuffer, Config
+import gym
+import gym_UR5_FetchReach
+from algorithms.offline.rebrac_Fetch_UR5 import wrap_env, evaluate, compute_mean_std
 import json
 import argparse
 
@@ -29,7 +30,7 @@ def main(env_name, num_episodes, config_path, model_path, seed):
 
     config = Config.from_dict(Config, config_dict)
 
-    dataset_name = f'data/{env_name}Dense.npy'
+    dataset_name = '/home/nikisim/Mag_diplom/UR5_FetchReach_real/datasets/UR5_FetchReach_real_small.npy'
 
     buffer = ReplayBuffer()
     buffer.create_from_d4rl(
@@ -56,7 +57,9 @@ def main(env_name, num_episodes, config_path, model_path, seed):
 
     actor = load_train_state(model_path, train_state_struc)
 
-    env = gym.make(f'{env_name}Dense-v2', render_mode='human')
+    env = gym.make('gym_UR5_FetchReach/UR5_FetchReachEnv-v0', render=True)
+    # env = gym.make('FetchPickAndPlaceDense-v2', render_mode='human')
+
     env.action_space.seed(seed)
     env.observation_space.seed(seed)
     env = wrap_env(env, buffer.mean, buffer.std)
@@ -74,9 +77,9 @@ if __name__ == "__main__":
     # Set up the argument parser
     parser = argparse.ArgumentParser(description="Evaluate a CORL pre-trained model.")
     parser.add_argument("--env_name", type=str, default='FetchReach',help="Name of the environment to run.")
-    parser.add_argument("--config_path", type=str, default='data/saved_models/FetchPush/config.json', help="Path to the configuration JSON file.")
-    parser.add_argument("--model_path", type=str, default='data/saved_models/FetchPush/actor_state90.pkl', help="Path to the saved model.")
-    parser.add_argument("--num_episodes", type=int, default=5, help="Number of episodes to run.")
+    parser.add_argument("--config_path", type=str, default='/home/nikisim/Mag_diplom/CORL/data/saved_models/sim_as_real/FetchReach_UR5_ReBRAC_ac1300_bc_1100_ReBRAC_1300.0_1100.0_Reach--d8e5f605/config.json', help="Path to the configuration JSON file.")
+    parser.add_argument("--model_path", type=str, default='/home/nikisim/Mag_diplom/CORL/data/saved_models/sim_as_real/FetchReach_UR5_ReBRAC_ac1300_bc_1100_ReBRAC_1300.0_1100.0_Reach--d8e5f605/actor_state4200.pkl', help="Path to the saved model.")
+    parser.add_argument("--num_episodes", type=int, default=100, help="Number of episodes to run.")
     parser.add_argument("--seed", type=int, default=1, help="Random seed for reproducibility.")
 
     # Parse the command-line arguments
