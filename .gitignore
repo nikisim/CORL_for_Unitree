@@ -13,6 +13,8 @@ unitree_a1_saved_models/
 *pkl
 *ipynb
 data/
+test*
+eval_pandas*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
